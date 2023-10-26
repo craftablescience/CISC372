@@ -1,0 +1,8 @@
+# IDEs
+.idea/
+.vs/
+.vscode/
+
+# CMake
+cmake-build-*/
+[Bb]uild*/
