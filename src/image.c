@@ -10,6 +10,17 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
+#ifdef CONVOLUTION_MODE_PTHREADS
+    #include <pthread.h>
+
+    // Hardcoding to 4 to match test case
+    #define MAX_THREAD_COUNT 4
+#endif
+
+#ifdef CONVOLUTION_MODE_OPENMP
+    #include <omp.h>
+#endif
+
 #define IMG_DATA_INDEX(x, y, width, bit, bpp) \
     (y * width * bpp + bpp * x + bit)
 
@@ -77,7 +88,7 @@ static uint8_t getPixelValue(Image* srcImage, int x, int y, int bit, const Matri
     if (px >= srcImage->width) px = srcImage->width - 1;
     if (py >= srcImage->height) py = srcImage->height - 1;
 
-    return
+    return (uint8_t) (
         algorithm[0][0] * srcImage->data[IMG_DATA_INDEX(mx, my, srcImage->width, bit, srcImage->bpp)] +
         algorithm[0][1] * srcImage->data[IMG_DATA_INDEX(x,  my, srcImage->width, bit, srcImage->bpp)] +
         algorithm[0][2] * srcImage->data[IMG_DATA_INDEX(px, my, srcImage->width, bit, srcImage->bpp)] +
@@ -86,7 +97,7 @@ static uint8_t getPixelValue(Image* srcImage, int x, int y, int bit, const Matri
         algorithm[1][2] * srcImage->data[IMG_DATA_INDEX(px, y,  srcImage->width, bit, srcImage->bpp)] +
         algorithm[2][0] * srcImage->data[IMG_DATA_INDEX(mx, py, srcImage->width, bit, srcImage->bpp)] +
         algorithm[2][1] * srcImage->data[IMG_DATA_INDEX(x,  py, srcImage->width, bit, srcImage->bpp)] +
-        algorithm[2][2] * srcImage->data[IMG_DATA_INDEX(px, py, srcImage->width, bit, srcImage->bpp)];
+        algorithm[2][2] * srcImage->data[IMG_DATA_INDEX(px, py, srcImage->width, bit, srcImage->bpp)]);
 }
 
 /*
@@ -97,9 +108,13 @@ static uint8_t getPixelValue(Image* srcImage, int x, int y, int bit, const Matri
  *                It should be the same size as srcImage
  *     algorithm: The kernel matrix to use for the convolution
  */
+#if defined(CONVOLUTION_MODE_SERIAL) || defined(CONVOLUTION_MODE_OPENMP)
 static void convolute(Image* srcImage, Image* destImage, const Matrix algorithm) {
     if (srcImage->width != destImage->width || srcImage->height != destImage->height || srcImage->bpp != destImage->bpp)
         return;
+#ifdef CONVOLUTION_MODE_OPENMP
+    #pragma omp for
+#endif
     for (int row = 0; row < srcImage->height; row++) {
         for (int pix = 0; pix < srcImage->width; pix++) {
             for (int bit = 0; bit < srcImage->bpp; bit++) {
@@ -108,6 +123,61 @@ static void convolute(Image* srcImage, Image* destImage, const Matrix algorithm)
         }
     }
 }
+#elif defined(CONVOLUTION_MODE_PTHREADS)
+typedef struct {
+    unsigned int start;
+    unsigned int end;
+    Image* srcImage;
+    Image* destImage;
+    Matrix algorithm;
+} thread_data_t;
+
+static void* convoluteHelper(void* data) {
+    thread_data_t* threadData = (thread_data_t*) data;
+    for (unsigned int row = threadData->start; row < threadData->end; row++) {
+        for (int pix = 0; pix < threadData->srcImage->width; pix++) {
+            for (int bit = 0; bit < threadData->srcImage->bpp; bit++) {
+                threadData->destImage->data[IMG_DATA_INDEX(pix, row, threadData->srcImage->width, bit, threadData->srcImage->bpp)] = getPixelValue(threadData->srcImage, pix, (int) row, bit, threadData->algorithm);
+            }
+        }
+    }
+    pthread_exit(NULL);
+}
+
+static void convolute(Image* srcImage, Image* destImage, const Matrix algorithm) {
+    if (srcImage->width != destImage->width || srcImage->height != destImage->height || srcImage->bpp != destImage->bpp)
+        return;
+
+    pthread_t threads[MAX_THREAD_COUNT];
+    thread_data_t threadData[MAX_THREAD_COUNT];
+
+    const unsigned int rowSplitSize = srcImage->height / MAX_THREAD_COUNT;
+
+    for (int i = 0; i < MAX_THREAD_COUNT; i++) {
+        threadData[i].start = i * rowSplitSize;
+        if (i == MAX_THREAD_COUNT - 1) {
+            threadData[i].end = srcImage->height;
+        } else {
+            threadData[i].end = rowSplitSize * (i + 1);
+        }
+
+        threadData[i].srcImage = srcImage;
+        threadData[i].destImage = destImage;
+
+        for (int x = 0; x < 3; x++) {
+            for (int y = 0; y < 3; y++) {
+                threadData[i].algorithm[x][y] = algorithm[x][y];
+            }
+        }
+
+        pthread_create(&threads[i], NULL, convoluteHelper, (void*) &threadData[i]);
+    }
+
+    for (int i = 0; i < MAX_THREAD_COUNT; i++) {
+        pthread_join(threads[i], NULL);
+    }
+}
+#endif
 
 /*
  * getKernelType: Converts the string name of a convolution into a value from the KernelTypes enumeration
@@ -166,6 +236,14 @@ int main(int argc, char** argv) {
         return printAndReturn("%s", "Usage: image <filename> <type>\n"
                               "\twhere type is one of (edge, sharpen, blur, gauss, emboss, identity)\n");
 
+#if defined(CONVOLUTION_MODE_SERIAL)
+    printf("%s", "Using 1 thread (Serial)...\n");
+#elif defined(CONVOLUTION_MODE_PTHREADS)
+    printf("Using %d threads (PThreads)...\n", MAX_THREAD_COUNT);
+#elif defined(CONVOLUTION_MODE_OPENMP)
+    printf("Using %d threads (OpenMP)...\n", omp_get_max_threads());
+#endif
+
     // Start timer
     time_t timeStart = time(NULL);
 
@@ -173,11 +251,26 @@ int main(int argc, char** argv) {
     char* fileName = argv[1];
     KernelType type = getKernelType(argv[2]);
 
-    // Get output filename ("kernelType_originalName")
+    // Get output filename ("kernelType_convolutionMethod_originalName")
     char outputName[PATH_MAX];
+    unsigned long outputCursor = 0;
     strcpy(outputName, argv[2]);
-    outputName[strlen(argv[2])] = '_';
-    strcpy(outputName + strlen(argv[2]) + 1, extractFileName(fileName));
+    outputCursor += strlen(argv[2]);
+    outputName[outputCursor] = '_';
+    outputCursor++;
+    const char* convolutionMode =
+#if defined(CONVOLUTION_MODE_SERIAL)
+        "serial";
+#elif defined(CONVOLUTION_MODE_PTHREADS)
+        "pthreads";
+#elif defined(CONVOLUTION_MODE_OPENMP)
+        "openmp";
+#endif
+    strcpy(outputName + outputCursor, convolutionMode);
+    outputCursor += strlen(convolutionMode);
+    outputName[outputCursor] = '_';
+    outputCursor++;
+    strcpy(outputName + outputCursor, extractFileName(fileName));
 
     // Don't flip images, we're not a graphics library
     stbi_set_flip_vertically_on_load(0);
