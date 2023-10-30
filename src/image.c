@@ -112,12 +112,13 @@ static uint8_t getPixelValue(Image* srcImage, int x, int y, int bit, const Matri
 static void convolute(Image* srcImage, Image* destImage, const Matrix algorithm) {
     if (srcImage->width != destImage->width || srcImage->height != destImage->height || srcImage->bpp != destImage->bpp)
         return;
+    int pix, bit;
 #ifdef CONVOLUTION_MODE_OPENMP
-    #pragma omp for
+    #pragma omp parallel for private(pix, bit) shared(srcImage, destImage, algorithm) schedule(static) default(none)
 #endif
     for (int row = 0; row < srcImage->height; row++) {
-        for (int pix = 0; pix < srcImage->width; pix++) {
-            for (int bit = 0; bit < srcImage->bpp; bit++) {
+        for (pix = 0; pix < srcImage->width; pix++) {
+            for (bit = 0; bit < srcImage->bpp; bit++) {
                 destImage->data[IMG_DATA_INDEX(pix, row, srcImage->width, bit, srcImage->bpp)] = getPixelValue(srcImage, pix, row, bit, algorithm);
             }
         }
