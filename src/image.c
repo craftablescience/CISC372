@@ -100,9 +100,9 @@ static uint8_t getPixelValue(Image* srcImage, int x, int y, int bit, const Matri
 static void convolute(Image* srcImage, Image* destImage, const Matrix algorithm) {
     if (srcImage->width != destImage->width || srcImage->height != destImage->height || srcImage->bpp != destImage->bpp)
         return;
-    for (int row = 0; row < srcImage->height; row++){
-        for (int pix = 0; pix < srcImage->width; pix++){
-            for (int bit = 0; bit < srcImage->bpp; bit++){
+    for (int row = 0; row < srcImage->height; row++) {
+        for (int pix = 0; pix < srcImage->width; pix++) {
+            for (int bit = 0; bit < srcImage->bpp; bit++) {
                 destImage->data[IMG_DATA_INDEX(pix, row, srcImage->width, bit, srcImage->bpp)] = getPixelValue(srcImage, pix, row, bit, algorithm);
             }
         }
@@ -163,7 +163,8 @@ static int printAndReturn(const char* str, ...) {
  */
 int main(int argc, char** argv) {
     if (argc != 3)
-        return printAndReturn("%s", "Usage: image <filename> <type>\n\twhere type is one of (edge,sharpen,blur,gauss,emboss,identity)\n");;
+        return printAndReturn("%s", "Usage: image <filename> <type>\n"
+                              "\twhere type is one of (edge, sharpen, blur, gauss, emboss, identity)\n");
 
     // Start timer
     time_t timeStart = time(NULL);
@@ -172,7 +173,7 @@ int main(int argc, char** argv) {
     char* fileName = argv[1];
     KernelType type = getKernelType(argv[2]);
 
-    // Get output filename
+    // Get output filename ("kernelType_originalName")
     char outputName[PATH_MAX];
     strcpy(outputName, argv[2]);
     outputName[strlen(argv[2])] = '_';
