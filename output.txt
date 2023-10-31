@@ -1,0 +1,11 @@
+Script started on Mon Oct 30 21:15:16 2023
+[belewis@r1n00 build]$ srun CISC372_HW3_PTHREADS "../res/pic1.jpg" "edge"
+Using 4 threads (PThreads)...
+Took 6 seconds
+[belewis@r1n00 build]$ srun CISC372_HW3_OPENMP "../res/pic1.jpg" "edge"
+Using 4 threads (OpenMP)...
+Took 6 seconds
+[belewis@r1n00 build]$ exit
+exit
+
+Script done on Mon Oct 30 21:16:31 2023
